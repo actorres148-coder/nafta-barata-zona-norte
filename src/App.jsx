@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import DeckGL from '@deck.gl/react'
 import { FlyToInterpolator } from '@deck.gl/core'
-import { ScatterplotLayer, TextLayer } from '@deck.gl/layers'
+import { PathLayer, ScatterplotLayer, TextLayer } from '@deck.gl/layers'
 import Map from 'react-map-gl/maplibre'
 import { obtenerEstaciones } from './supabaseClient'
 
@@ -36,6 +36,10 @@ function distanciaKm(a, b) {
   const h = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLon / 2) ** 2
   return 2 * R * Math.asin(Math.sqrt(h))
 }
+
+// Link de Google Maps: sin punto de partida, así arranca solo desde donde está la persona
+const linkGoogleMaps = (e) =>
+  `https://www.google.com/maps/dir/?api=1&destination=${e.latitud},${e.longitud}&travelmode=driving&dir_action=navigate`
 
 const textoKm = (d) => (d < 1 ? `${Math.round(d * 1000)} m` : `${d.toFixed(1).replace('.', ',')} km`)
 
@@ -109,6 +113,36 @@ export default function App() {
   const [origen, setOrigen] = useState(null) // de dónde salió tu ubicación: 'gps', 'mapa' o 'ejemplo'
   const [elegida, setElegida] = useState(null) // id de la estación que tocaste
 
+  // Camino por calle hasta la estación que tocaste (OSRM: servicio gratuito, sin clave)
+  const [ruta, setRuta] = useState(null) // { path, km, min, estado: 'cargando' | 'ok' | 'error' }
+  const destino = lista.find((e) => e.id === elegida) ?? null
+
+  useEffect(() => {
+    if (!destino || !yo) {
+      setRuta(null)
+      return
+    }
+    const recta = [
+      [yo.lon, yo.lat],
+      [destino.longitud, destino.latitud],
+    ]
+    setRuta({ path: recta, estado: 'cargando' })
+    const control = new AbortController()
+    const url = `https://router.project-osrm.org/route/v1/driving/${yo.lon},${yo.lat};${destino.longitud},${destino.latitud}?overview=full&geometries=geojson`
+    fetch(url, { signal: control.signal })
+      .then((res) => res.json())
+      .then((json) => {
+        const r = json.routes?.[0]
+        if (!r) throw new Error('Sin camino')
+        setRuta({ path: r.geometry.coordinates, km: r.distance / 1000, min: r.duration / 60, estado: 'ok' })
+      })
+      .catch((e) => {
+        if (e.name !== 'AbortError') setRuta({ path: recta, estado: 'error' }) // si falla, línea recta
+      })
+    return () => control.abort()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [destino?.id, destino?.latitud, yo?.lat, yo?.lon])
+
   function volarA(lon, lat, zoom) {
     setVista((v) => ({ ...v, longitude: lon, latitude: lat, zoom, transitionDuration: 800, transitionInterpolator: new FlyToInterpolator() }))
   }
@@ -141,6 +175,16 @@ export default function App() {
       },
       { enableHighAccuracy: true, timeout: 10000 }
     )
+  }
+
+  // Tocaste una estación de la lista: el mapa se acomoda para mostrar el camino completo
+  function elegirDeLaLista(e) {
+    setElegida(e.id)
+    // En el celular el mapa está arriba: subimos para que se vea el camino
+    if (window.innerWidth <= 860) document.querySelector('.mapa')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    if (!yo) return volarA(e.longitud, e.latitud, 14)
+    const d = distanciaKm(yo, { lat: e.latitud, lon: e.longitud })
+    volarA((yo.lon + e.longitud) / 2, (yo.lat + e.latitud) / 2, d < 1.5 ? 14 : d < 3.5 ? 13 : 12)
   }
 
   function elegirCombustible(c) {
@@ -176,6 +220,18 @@ export default function App() {
         getLineColor: [...AZUL, 160],
         lineWidthMinPixels: 1.5,
         updateTriggers: { getRadius: radioKm },
+      }),
+    ruta &&
+      new PathLayer({
+        id: 'ruta',
+        data: [ruta],
+        getPath: (d) => d.path,
+        getColor: ruta.estado === 'ok' ? [...AZUL, 230] : [...AZUL, 130],
+        getWidth: 6,
+        widthUnits: 'pixels',
+        capRounded: true,
+        jointRounded: true,
+        updateTriggers: { getPath: ruta.path, getColor: ruta.estado },
       }),
     new ScatterplotLayer({
       id: 'estaciones',
@@ -345,11 +401,11 @@ export default function App() {
             masCercana={masCercana}
             promedioCerca={promedioCerca}
             categoriaDe={categoriaDe}
-            alElegir={(e) => { setElegida(e.id); volarA(e.longitud, e.latitud, 14) }}
+            alElegir={elegirDeLaLista}
           />
         </aside>
 
-        <div className="mapa">
+        <div className={`mapa ${destino ? 'con-ruta' : ''}`}>
           {cargando && <div className="estado">Cargando estaciones desde Supabase…</div>}
           {error && (
             <div className="estado error">
@@ -373,6 +429,35 @@ export default function App() {
           >
             <Map mapStyle={MAPA_BASE} />
           </DeckGL>
+
+          {destino && (
+            <div className="ruta">
+              <div className="ruta-arriba">
+                <div>
+                  <div className="ruta-sub">{yo ? 'Camino hasta' : 'Estación elegida'}</div>
+                  <strong>
+                    {destino.bandera} · {pesos.format(destino.precio)}
+                  </strong>
+                </div>
+                <button className="ruta-cerrar" onClick={() => setElegida(null)} aria-label="Cerrar">
+                  ✕
+                </button>
+              </div>
+              {ruta?.estado === 'cargando' && <div className="ruta-sub">Calculando el camino…</div>}
+              {ruta?.estado === 'ok' && (
+                <>
+                  <div className="ruta-dato">
+                    {textoKm(ruta.km)} · {Math.max(1, Math.round(ruta.min))} min
+                  </div>
+                  <div className="ruta-sub">en auto, por calle</div>
+                </>
+              )}
+              {ruta?.estado === 'error' && <div className="ruta-sub">No pudimos calcular el camino por calle; te mostramos la línea recta.</div>}
+              <a className="ruta-boton" href={linkGoogleMaps(destino)} target="_blank" rel="noopener noreferrer">
+                🧭 Cómo llegar con Google Maps
+              </a>
+            </div>
+          )}
 
           <Leyenda tipo={tipo} cortes={cortes} />
         </div>

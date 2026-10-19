@@ -141,6 +141,21 @@ button:focus-visible { outline: 3px solid var(--azul); outline-offset: 2px; }
 
 .pie { font-size: 12px; color: var(--suave); }
 
+/* Camino hasta la estación elegida */
+.ruta {
+  position: absolute; top: 10px; left: 10px; right: 10px; z-index: 4; max-width: 360px;
+  background: var(--tarjeta); border: 1px solid var(--borde); border-radius: 10px;
+  padding: 10px 12px; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+}
+.ruta-arriba { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+.ruta-sub { font-size: 12px; color: var(--suave); }
+.ruta-dato { font-family: var(--titulos); font-weight: 700; font-size: 24px; margin-top: 4px; }
+.ruta-cerrar { border: 0; background: none; color: var(--suave); font-size: 18px; padding: 0 2px; }
+.ruta-boton {
+  display: block; text-align: center; margin-top: 8px; padding: 10px; border-radius: 9px;
+  background: var(--verde); color: #fff; font-weight: 600; text-decoration: none;
+}
+
 /* Celular */
 @media (max-width: 860px) {
   .principal { grid-template-columns: minmax(0, 1fr); }
@@ -150,4 +165,7 @@ button:focus-visible { outline: 3px solid var(--azul); outline-offset: 2px; }
   .leyenda { font-size: 11px; padding: 6px 8px; }
   .leyenda-extra { display: none; }
   .mapa { min-height: 420px; }
+  /* con un camino abierto, el cartel va abajo y se oculta la leyenda */
+  .ruta { top: auto; bottom: 10px; }
+  .con-ruta .leyenda { display: none; }
 }
